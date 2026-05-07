@@ -94,3 +94,37 @@ def test_parse_transcript_tool_error(tmp_path):
     ], transcript)
     result = tg.parse_transcript(str(transcript), session_id="test")
     assert result["has_errors"] is True
+
+
+def test_extract_preview_single_sentence():
+    text = "I implemented the button component. It has hover effects."
+    result = tg.extract_preview(text)
+    assert result == "I implemented the button component."
+
+
+def test_extract_preview_short_first_sentence():
+    # First sentence < 40 chars → include second
+    text = "Done! I also refactored the modal component to use slots."
+    result = tg.extract_preview(text)
+    assert "Done!" in result
+    assert "refactored" in result
+
+
+def test_extract_preview_strips_code_blocks():
+    text = "```python\nrm -rf /\n```\nHere is the explanation of the fix."
+    result = tg.extract_preview(text)
+    assert "rm -rf" not in result
+    assert "explanation" in result
+
+
+def test_extract_preview_truncates_long():
+    text = "This is a very long sentence that goes on and on and keeps going until it exceeds the maximum character limit that we have set for preview text in our notification system."
+    result = tg.extract_preview(text, max_chars=50)
+    assert len(result) <= 55  # allow a few chars for ellipsis
+    assert not result.endswith(" ")
+    assert "…" in result
+
+
+def test_extract_preview_empty():
+    assert tg.extract_preview("") == ""
+    assert tg.extract_preview("   ") == ""

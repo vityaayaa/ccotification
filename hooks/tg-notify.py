@@ -117,3 +117,29 @@ def parse_transcript(path: str, session_id: str = "") -> dict:
         "has_errors": has_errors,
         "cwd": cwd,
     }
+
+
+def extract_preview(text: str, max_chars: int = 150) -> str:
+    """Return first 1-2 sentences, max max_chars chars, no word-cutting."""
+    if not text or not text.strip():
+        return ""
+    # Strip code blocks
+    cleaned = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    cleaned = re.sub(r"`[^`]+`", "", cleaned).strip()
+    if not cleaned:
+        return ""
+
+    sentences = re.split(r"(?<=[.!?])\s+", cleaned)
+    result = sentences[0]
+
+    if len(result) < 30 and len(sentences) > 1:
+        result = result + " " + sentences[1]
+
+    if len(result) > max_chars:
+        truncated = result[:max_chars]
+        last_space = truncated.rfind(" ")
+        if last_space > max_chars * 0.7:
+            truncated = truncated[:last_space]
+        result = truncated.rstrip(".,;:") + "…"
+
+    return result
