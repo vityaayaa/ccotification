@@ -340,3 +340,77 @@ def is_muted(state: dict) -> bool:
         return datetime.now() < datetime.fromisoformat(mute_until)
     except Exception:
         return False
+
+
+def update_daily_stats(state: dict, duration_s: float) -> dict:
+    today = datetime.now().strftime("%Y-%m-%d")
+    if state.get("daily_date") != today:
+        state["daily_date"] = today
+        state["daily_count"] = 0
+        state["daily_total_duration_s"] = 0.0
+    state["daily_count"] = state.get("daily_count", 0) + 1
+    state["daily_total_duration_s"] = state.get("daily_total_duration_s", 0.0) + duration_s
+    return state
+
+def update_cron_entry(reset_at: str, reset_type: str):
+    """Write/replace managed cron entry for the given reset time."""
+    try:
+        reset = datetime.fromisoformat(reset_at.replace("Z", "+00:00")).astimezone()
+        marker = f"# tg-hook-{reset_type}-reset (managed by ccotification)"
+        cron_line = (
+            f"{reset.minute} {reset.hour} {reset.day} {reset.month} * "
+            f"python3 ~/.claude/hooks/tg-notify.py --notify-reset {reset_type}"
+        )
+        result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+        existing = result.stdout if result.returncode == 0 else ""
+        lines = [l for l in existing.splitlines()
+                 if marker not in l and f"--notify-reset {reset_type}" not in l]
+        lines.extend([marker, cron_line])
+        subprocess.run(["crontab", "-"], input="\n".join(lines) + "\n",
+                       text=True, check=True)
+    except Exception:
+        pass
+
+def check_reset_notifications(token: str, chat_id: int,
+                               usage: dict, state: dict) -> dict:
+    if not usage:
+        return state
+
+    s_reset = usage.get("sessionResetAt")
+    w_reset = usage.get("weeklyResetAt")
+
+    if s_reset and s_reset != state.get("last_session_reset_at"):
+        if state.get("last_session_reset_at") is not None:
+            send_message(token, chat_id,
+                "🔄 <b>Окно сброшено!</b>\n\n"
+                f"📊 Окно: {usage.get('sessionUsage', 0)}% → снова полный доступ\n"
+                f"⏰ Следующий сброс через {format_time_until(s_reset)}")
+        state["last_session_reset_at"] = s_reset
+        update_cron_entry(s_reset, "session")
+
+    if w_reset and w_reset != state.get("last_weekly_reset_at"):
+        if state.get("last_weekly_reset_at") is not None:
+            send_message(token, chat_id,
+                "🗓 <b>Недельный лимит сброшен!</b>\n\n"
+                f"📅 Неделя: {usage.get('weeklyUsage', 0)}%\n"
+                f"⏰ Следующий сброс через {format_time_until(w_reset)}")
+        state["last_weekly_reset_at"] = w_reset
+        update_cron_entry(w_reset, "weekly")
+
+    return state
+
+def notify_reset(reset_type: str):
+    """Called by cron with --notify-reset <type>."""
+    config = load_config()
+    usage = read_usage()
+    if reset_type == "session":
+        next_r = format_time_until(usage.get("sessionResetAt", "")) if usage else "?"
+        text = ("🔄 <b>Окно сброшено!</b>\n\n"
+                "📊 Снова полный доступ\n"
+                f"⏰ Следующий сброс через {next_r}")
+    else:
+        next_r = format_time_until(usage.get("weeklyResetAt", "")) if usage else "?"
+        text = ("🗓 <b>Недельный лимит сброшен!</b>\n\n"
+                "📅 Недельные лимиты обновлены\n"
+                f"⏰ Следующий сброс через {next_r}")
+    send_message(config["bot_token"], config["chat_id"], text)

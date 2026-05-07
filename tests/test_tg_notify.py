@@ -381,3 +381,80 @@ def test_process_callbacks_mute_eod():
     until = datetime.fromisoformat(updated["mute_until"])
     tomorrow = datetime.now() + timedelta(days=1)
     assert until.day == tomorrow.day or until.date() >= datetime.now().date()
+
+
+def test_update_daily_stats_same_day():
+    today = datetime.now().strftime("%Y-%m-%d")
+    state = {"daily_date": today, "daily_count": 5, "daily_total_duration_s": 200.0}
+    updated = tg.update_daily_stats(state, 60.0)
+    assert updated["daily_count"] == 6
+    assert updated["daily_total_duration_s"] == 260.0
+
+def test_update_daily_stats_new_day():
+    state = {"daily_date": "2026-01-01", "daily_count": 10, "daily_total_duration_s": 500.0}
+    updated = tg.update_daily_stats(state, 30.0)
+    # Should reset (today != 2026-01-01)
+    assert updated["daily_count"] == 1
+    assert updated["daily_total_duration_s"] == 30.0
+
+def test_update_cron_entry_writes_entry():
+    reset_at = "2026-05-07T15:42:00+00:00"
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="")
+        tg.update_cron_entry(reset_at, "session")
+    write_call = mock_run.call_args_list[-1]
+    new_crontab = write_call[1]["input"]
+    assert "tg-hook-session-reset" in new_crontab
+    assert "--notify-reset session" in new_crontab
+
+def test_update_cron_entry_replaces_old():
+    existing = (
+        "# tg-hook-session-reset (managed by ccotification)\n"
+        "30 10 7 5 * python3 ~/.claude/hooks/tg-notify.py --notify-reset session\n"
+    )
+    reset_at = "2026-05-07T15:42:00+00:00"
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout=existing)
+        tg.update_cron_entry(reset_at, "session")
+    write_call = mock_run.call_args_list[-1]
+    new_crontab = write_call[1]["input"]
+    assert "30 10 7 5" not in new_crontab
+    assert "42" in new_crontab
+
+def test_check_reset_no_change():
+    """If sessionResetAt unchanged, no notification sent."""
+    usage = {"sessionUsage": 5, "sessionResetAt": "2026-05-07T15:00:00+00:00",
+             "weeklyUsage": 10, "weeklyResetAt": "2026-05-08T16:00:00+00:00"}
+    state = {"last_session_reset_at": "2026-05-07T15:00:00+00:00",
+             "last_weekly_reset_at": "2026-05-08T16:00:00+00:00"}
+    sent_texts = []
+    with patch.object(tg, "send_message", side_effect=lambda *a, **k: sent_texts.append(a[2])):
+        with patch.object(tg, "update_cron_entry"):
+            tg.check_reset_notifications("TOKEN", 12345, usage, state)
+    assert len(sent_texts) == 0
+
+def test_check_reset_session_changed():
+    """If sessionResetAt changed and previous was not None → send notification."""
+    usage = {"sessionUsage": 2, "sessionResetAt": "2026-05-07T20:00:00+00:00",
+             "weeklyUsage": 10, "weeklyResetAt": "2026-05-08T16:00:00+00:00"}
+    state = {"last_session_reset_at": "2026-05-07T15:00:00+00:00",
+             "last_weekly_reset_at": "2026-05-08T16:00:00+00:00"}
+    sent_texts = []
+    with patch.object(tg, "send_message", side_effect=lambda *a, **k: sent_texts.append(a[2])):
+        with patch.object(tg, "update_cron_entry"):
+            tg.check_reset_notifications("TOKEN", 12345, usage, state)
+    assert len(sent_texts) == 1
+    assert "Окно сброшено" in sent_texts[0]
+    assert state["last_session_reset_at"] == "2026-05-07T20:00:00+00:00"
+
+def test_check_reset_first_run_no_notification():
+    """If previous reset_at is None (first run), store but do not notify."""
+    usage = {"sessionUsage": 5, "sessionResetAt": "2026-05-07T15:00:00+00:00",
+             "weeklyUsage": 10, "weeklyResetAt": "2026-05-08T16:00:00+00:00"}
+    state = {"last_session_reset_at": None, "last_weekly_reset_at": None}
+    sent_texts = []
+    with patch.object(tg, "send_message", side_effect=lambda *a, **k: sent_texts.append(a[2])):
+        with patch.object(tg, "update_cron_entry"):
+            tg.check_reset_notifications("TOKEN", 12345, usage, state)
+    assert len(sent_texts) == 0
+    assert state["last_session_reset_at"] == "2026-05-07T15:00:00+00:00"
