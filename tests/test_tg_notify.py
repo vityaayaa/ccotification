@@ -233,3 +233,59 @@ def test_format_time_until_minutes_only():
 def test_format_time_until_past():
     result = tg.format_time_until("2020-01-01T00:00:00+00:00")
     assert result == "скоро"
+
+
+def test_escape_html():
+    assert tg.escape_html("<b>hello & world</b>") == "&lt;b&gt;hello &amp; world&lt;/b&gt;"
+
+
+def test_build_message_contains_title():
+    msg = tg.build_message(
+        title="✅ Быстрый ответ",
+        project_path="projects / myapp",
+        git={"branch": "main", "short_hash": "abc1234", "message": "Fix bug"},
+        duration_s=15.0,
+        preview="Here is what I did.",
+        tool_count=3,
+        usage=None,
+    )
+    assert "✅ Быстрый ответ" in msg
+    assert "projects / myapp" in msg
+    assert "main" in msg
+    assert "abc1234" in msg
+    assert "Here is what I did." in msg
+    assert "3 инструментов" in msg
+    assert "<b>" in msg
+    assert "<code>" in msg
+
+
+def test_build_message_with_usage():
+    future = (datetime.now(timezone.utc) + timedelta(hours=3, minutes=0)).isoformat()
+    msg = tg.build_message(
+        title="🧠 Хорошо подумал",
+        project_path="projects / myapp",
+        git=None,
+        duration_s=60.0,
+        preview="",
+        tool_count=0,
+        usage={"sessionUsage": 7, "sessionResetAt": future,
+               "weeklyUsage": 30, "weeklyResetAt": future,
+               "extraUsageEnabled": False},
+    )
+    assert "7%" in msg
+    assert "30%" in msg
+
+
+def test_build_message_no_git():
+    msg = tg.build_message("⚡ Мгновенный ответ", "home / victor", None,
+                            5.0, "", 0, None)
+    assert "🌿" not in msg
+
+
+def test_build_keyboard_structure():
+    kb = tg.build_keyboard()
+    assert "inline_keyboard" in kb
+    row = kb["inline_keyboard"][0]
+    assert len(row) == 4
+    assert row[0]["callback_data"] == "mute_1800"
+    assert row[3]["callback_data"] == "mute_eod"

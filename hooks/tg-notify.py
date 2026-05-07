@@ -219,3 +219,59 @@ def format_time_until(iso_str: str) -> str:
         return f"{minutes}м"
     except Exception:
         return "?"
+
+
+def escape_html(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def build_message(title: str, project_path: str, git: dict | None,
+                  duration_s: float, preview: str, tool_count: int,
+                  usage: dict | None) -> str:
+    now = datetime.now().strftime("%H:%M:%S")
+    m, s = divmod(int(duration_s), 60)
+    dur_str = f"{m}м {s}с" if m > 0 else f"{s}с"
+
+    lines = [f"<b>{escape_html(title)}</b>  ·  {now}", ""]
+
+    # Project context block (code block for visual separation)
+    ctx = [f"┌ 📁 {escape_html(project_path)}"]
+    if git:
+        ctx.append(f"│ 🌿 {escape_html(git['branch'])}  ·  "
+                   f"{escape_html(git['short_hash'])}  {escape_html(git['message'])}")
+    ctx.append("└" + "─" * 37)
+    lines.append("<code>" + "\n".join(ctx) + "</code>")
+    lines.append("")
+
+    if preview:
+        lines.append(escape_html(preview))
+        lines.append("")
+
+    tool_line = f"🛠 {tool_count} инструментов  ·  ⏱ {dur_str}" if tool_count > 0 else f"⏱ {dur_str}"
+    lines.append(tool_line)
+
+    if usage:
+        s_pct = usage.get("sessionUsage", 0)
+        s_reset = usage.get("sessionResetAt", "")
+        w_pct = usage.get("weeklyUsage", 0)
+        w_reset = usage.get("weeklyResetAt", "")
+        s_line = f"📊 Окно: {s_pct}%"
+        if s_reset:
+            s_line += f"  ·  сброс через {format_time_until(s_reset)}"
+        lines.append(s_line)
+        if w_pct > 0:
+            w_line = f"📅 Неделя: {w_pct}%"
+            if w_reset:
+                w_line += f"  ·  сброс через {format_time_until(w_reset)}"
+            lines.append(w_line)
+
+    return "\n".join(lines)
+
+
+def build_keyboard() -> dict:
+    return {"inline_keyboard": [[
+        {"text": "🔕 30 мин",     "callback_data": "mute_1800"},
+        {"text": "🔕 1 час",      "callback_data": "mute_3600"},
+        {"text": "🔕 3 часа",     "callback_data": "mute_10800"},
+        {"text": "🔕 До завтра",  "callback_data": "mute_eod"},
+    ]]}
