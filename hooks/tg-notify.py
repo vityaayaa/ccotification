@@ -41,3 +41,79 @@ def load_state() -> dict:
 def save_state(state: dict):
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(json.dumps(state, indent=2, default=str))
+
+
+def get_cwd_from_session(session_id: str) -> str:
+    """Find cwd from the session file matching session_id."""
+    sessions_dir = Path.home() / ".claude/sessions"
+    if sessions_dir.exists():
+        for f in sessions_dir.glob("*.json"):
+            try:
+                data = json.loads(f.read_text())
+                if data.get("sessionId") == session_id:
+                    return data.get("cwd", os.getcwd())
+            except Exception:
+                pass
+    return os.getcwd()
+
+
+def parse_transcript(path: str, session_id: str = "") -> dict:
+    """Parse JSONL transcript and return extracted data."""
+    messages = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    messages.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+
+    last_user = None
+    last_assistant = None
+    for msg in messages:
+        t = msg.get("type")
+        if t == "user":
+            last_user = msg
+        elif t == "assistant":
+            last_assistant = msg
+
+    # Duration: last user message → last assistant message
+    duration_s = 0.0
+    if last_user and last_assistant:
+        try:
+            t1 = datetime.fromisoformat(last_user["timestamp"].replace("Z", "+00:00"))
+            t2 = datetime.fromisoformat(last_assistant["timestamp"].replace("Z", "+00:00"))
+            duration_s = max(0.0, (t2 - t1).total_seconds())
+        except Exception:
+            pass
+
+    # Text + tool_use count from last assistant message
+    text = ""
+    tool_count = 0
+    if last_assistant:
+        for block in last_assistant.get("message", {}).get("content", []):
+            if block.get("type") == "text":
+                text += block.get("text", "")
+            elif block.get("type") == "tool_use":
+                tool_count += 1
+
+    # Tool errors: any tool_result with is_error in any user message
+    has_errors = False
+    for msg in messages:
+        if msg.get("type") == "user":
+            content = msg.get("message", {}).get("content", [])
+            if isinstance(content, list):
+                for block in content:
+                    if block.get("type") == "tool_result" and block.get("is_error"):
+                        has_errors = True
+
+    cwd = get_cwd_from_session(session_id) if session_id else os.getcwd()
+
+    return {
+        "duration_s": duration_s,
+        "text": text.strip(),
+        "tool_count": tool_count,
+        "has_errors": has_errors,
+        "cwd": cwd,
+    }
