@@ -143,3 +143,29 @@ def extract_preview(text: str, max_chars: int = 150) -> str:
         result = truncated.rstrip(".,;:") + "…"
 
     return result
+
+
+def count_questions_in_text(text: str) -> int:
+    """Count ? at sentence endings, ignoring code blocks."""
+    cleaned = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    cleaned = re.sub(r"`[^`]+`", "", cleaned)
+    return len(re.findall(r"\?\s*(?:\n|$)", cleaned))
+
+
+def get_title(duration_s: float, text: str, has_errors: bool) -> str:
+    q = count_questions_in_text(text)
+    if q >= 2:
+        base = "❓ Нужна твоя помощь"
+    elif q == 1:
+        base = "🤔 Клод хочет уточнить"
+    elif duration_s < 10:
+        base = "⚡ Мгновенный ответ"
+    elif duration_s < 30:
+        base = "✅ Быстрый ответ"
+    elif duration_s < 120:
+        base = "🧠 Хорошо подумал"
+    elif duration_s < 300:
+        base = "🔧 Серьёзная работа"
+    else:
+        base = "🏆 Монументальная работа"
+    return ("⚠️ " + base) if has_errors else base

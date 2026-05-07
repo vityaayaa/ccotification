@@ -128,3 +128,54 @@ def test_extract_preview_truncates_long():
 def test_extract_preview_empty():
     assert tg.extract_preview("") == ""
     assert tg.extract_preview("   ") == ""
+
+
+def test_count_questions_none():
+    assert tg.count_questions_in_text("I fixed the bug.") == 0
+
+
+def test_count_questions_one():
+    assert tg.count_questions_in_text("Which approach do you prefer?") == 1
+
+
+def test_count_questions_two():
+    assert tg.count_questions_in_text("Do you want X?\nOr maybe Y?") == 2
+
+
+def test_count_questions_ignores_code():
+    text = "```python\nresult = x if x else y\n```\nDoes this look right?"
+    assert tg.count_questions_in_text(text) == 1
+
+
+def test_get_title_instant():
+    assert tg.get_title(5.0, "Done.", False) == "⚡ Мгновенный ответ"
+
+
+def test_get_title_fast():
+    assert tg.get_title(20.0, "Done.", False) == "✅ Быстрый ответ"
+
+
+def test_get_title_thought():
+    assert tg.get_title(60.0, "Done.", False) == "🧠 Хорошо подумал"
+
+
+def test_get_title_serious():
+    assert tg.get_title(200.0, "Done.", False) == "🔧 Серьёзная работа"
+
+
+def test_get_title_monumental():
+    assert tg.get_title(400.0, "Done.", False) == "🏆 Монументальная работа"
+
+
+def test_get_title_question_one():
+    assert tg.get_title(60.0, "Which approach?", False) == "🤔 Клод хочет уточнить"
+
+
+def test_get_title_question_many():
+    assert tg.get_title(60.0, "Option A?\nOr B?", False) == "❓ Нужна твоя помощь"
+
+
+def test_get_title_error_prefix():
+    title = tg.get_title(20.0, "Done.", True)
+    assert title.startswith("⚠️")
+    assert "✅" in title
