@@ -289,3 +289,95 @@ def test_build_keyboard_structure():
     assert len(row) == 4
     assert row[0]["callback_data"] == "mute_1800"
     assert row[3]["callback_data"] == "mute_eod"
+
+
+from unittest.mock import patch, MagicMock
+import urllib.error
+
+
+def make_mock_response(data: dict):
+    mock = MagicMock()
+    mock.read.return_value = json.dumps(data).encode()
+    mock.__enter__ = lambda s: s
+    mock.__exit__ = MagicMock(return_value=False)
+    return mock
+
+
+def test_send_message_calls_api():
+    response_data = {"ok": True, "result": {"message_id": 1}}
+    with patch("urllib.request.urlopen", return_value=make_mock_response(response_data)) as mock_open:
+        tg.send_message("TOKEN", 12345, "Hello", None)
+    assert mock_open.called
+    req = mock_open.call_args[0][0]
+    body = json.loads(req.data)
+    assert body["chat_id"] == 12345
+    assert body["text"] == "Hello"
+    assert body["parse_mode"] == "HTML"
+
+
+def test_send_message_with_keyboard():
+    response_data = {"ok": True, "result": {"message_id": 2}}
+    with patch("urllib.request.urlopen", return_value=make_mock_response(response_data)):
+        kb = tg.build_keyboard()
+        tg.send_message("TOKEN", 12345, "Hi", kb)
+
+
+def test_poll_callbacks_empty():
+    response_data = {"ok": True, "result": []}
+    with patch("urllib.request.urlopen", return_value=make_mock_response(response_data)):
+        callbacks, new_offset = tg.poll_callbacks("TOKEN", 0)
+    assert callbacks == []
+    assert new_offset == 0
+
+
+def test_poll_callbacks_with_mute():
+    cb_query = {"id": "cq1", "from": {}, "message": {}, "chat_instance": "", "data": "mute_3600"}
+    response_data = {"ok": True, "result": [{"update_id": 100, "callback_query": cb_query}]}
+    with patch("urllib.request.urlopen", return_value=make_mock_response(response_data)):
+        callbacks, new_offset = tg.poll_callbacks("TOKEN", 0)
+    assert len(callbacks) == 1
+    assert callbacks[0]["data"] == "mute_3600"
+    assert new_offset == 101
+
+
+def test_tg_request_network_error():
+    with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("timeout")):
+        result = tg.tg_request("TOKEN", "sendMessage", {"chat_id": 1})
+    assert result == {}
+
+
+def test_is_muted_none():
+    assert tg.is_muted({"mute_until": None}) is False
+
+
+def test_is_muted_future():
+    future = (datetime.now() + timedelta(hours=1)).isoformat()
+    assert tg.is_muted({"mute_until": future}) is True
+
+
+def test_is_muted_past():
+    past = (datetime.now() - timedelta(hours=1)).isoformat()
+    assert tg.is_muted({"mute_until": past}) is False
+
+
+def test_process_callbacks_sets_mute():
+    cb = {"id": "cq1", "data": "mute_3600"}
+    state = {"mute_until": None, "tg_offset": 0}
+    response = {"ok": True, "result": [{"update_id": 5, "callback_query": cb}]}
+    with patch("urllib.request.urlopen", return_value=make_mock_response(response)):
+        updated = tg.process_callbacks("TOKEN", state)
+    assert updated["mute_until"] is not None
+    assert updated["tg_offset"] == 6
+    until = datetime.fromisoformat(updated["mute_until"])
+    assert until > datetime.now()
+
+
+def test_process_callbacks_mute_eod():
+    cb = {"id": "cq2", "data": "mute_eod"}
+    state = {"mute_until": None, "tg_offset": 0}
+    response = {"ok": True, "result": [{"update_id": 10, "callback_query": cb}]}
+    with patch("urllib.request.urlopen", return_value=make_mock_response(response)):
+        updated = tg.process_callbacks("TOKEN", state)
+    until = datetime.fromisoformat(updated["mute_until"])
+    tomorrow = datetime.now() + timedelta(days=1)
+    assert until.day == tomorrow.day or until.date() >= datetime.now().date()

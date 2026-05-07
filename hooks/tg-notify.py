@@ -275,3 +275,68 @@ def build_keyboard() -> dict:
         {"text": "🔕 3 часа",     "callback_data": "mute_10800"},
         {"text": "🔕 До завтра",  "callback_data": "mute_eod"},
     ]]}
+
+
+def tg_request(token: str, method: str, data: dict) -> dict:
+    url = TG_API.format(token=token, method=method)
+    body = json.dumps(data).encode()
+    req = request.Request(url, data=body, headers={"Content-Type": "application/json"})
+    try:
+        with request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read())
+    except error.URLError:
+        return {}
+
+
+def send_message(token: str, chat_id: int, text: str, reply_markup: dict = None) -> dict:
+    data = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+    if reply_markup:
+        data["reply_markup"] = json.dumps(reply_markup)
+    return tg_request(token, "sendMessage", data)
+
+
+def poll_callbacks(token: str, offset: int) -> tuple:
+    """Returns (list_of_callback_queries, new_offset)."""
+    result = tg_request(token, "getUpdates", {
+        "offset": offset, "timeout": 0, "limit": 20,
+        "allowed_updates": ["callback_query"],
+    })
+    updates = result.get("result", [])
+    callbacks = []
+    new_offset = offset
+    for update in updates:
+        new_offset = max(new_offset, update["update_id"] + 1)
+        if "callback_query" in update:
+            callbacks.append(update["callback_query"])
+    return callbacks, new_offset
+
+
+def answer_callback(token: str, callback_query_id: str):
+    tg_request(token, "answerCallbackQuery", {"callback_query_id": callback_query_id})
+
+
+def process_callbacks(token: str, state: dict) -> dict:
+    """Poll Telegram for mute button presses, update state."""
+    callbacks, new_offset = poll_callbacks(token, state.get("tg_offset", 0))
+    state["tg_offset"] = new_offset
+    for cb in callbacks:
+        data = cb.get("data", "")
+        answer_callback(token, cb["id"])
+        if data == "mute_eod":
+            tomorrow = (datetime.now() + timedelta(days=1)).replace(
+                hour=23, minute=59, second=59, microsecond=0)
+            state["mute_until"] = tomorrow.isoformat()
+        elif data.startswith("mute_"):
+            seconds = int(data.split("_")[1])
+            state["mute_until"] = (datetime.now() + timedelta(seconds=seconds)).isoformat()
+    return state
+
+
+def is_muted(state: dict) -> bool:
+    mute_until = state.get("mute_until")
+    if not mute_until:
+        return False
+    try:
+        return datetime.now() < datetime.fromisoformat(mute_until)
+    except Exception:
+        return False
