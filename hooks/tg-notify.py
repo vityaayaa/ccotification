@@ -169,3 +169,53 @@ def get_title(duration_s: float, text: str, has_errors: bool) -> str:
     else:
         base = "🏆 Монументальная работа"
     return ("⚠️ " + base) if has_errors else base
+
+
+def get_project_path(cwd: str) -> str:
+    """Return last 3 path components joined with ' / '."""
+    parts = [p for p in Path(cwd).parts if p and p != "/"]
+    return " / ".join(parts[-3:]) if parts else cwd
+
+
+def get_git_context(cwd: str) -> dict | None:
+    """Return {branch, short_hash, message} or None if not a git repo."""
+    try:
+        branch = subprocess.check_output(
+            ["git", "-C", cwd, "branch", "--show-current"],
+            stderr=subprocess.DEVNULL, text=True
+        ).strip()
+        log = subprocess.check_output(
+            ["git", "-C", cwd, "log", "--oneline", "-1"],
+            stderr=subprocess.DEVNULL, text=True
+        ).strip()
+        if not branch and not log:
+            return None
+        short_hash = log[:7] if log else ""
+        commit_msg = log[8:50] if len(log) > 8 else ""
+        return {"branch": branch, "short_hash": short_hash, "message": commit_msg}
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
+def read_usage() -> dict | None:
+    try:
+        return json.loads(USAGE_FILE.read_text())
+    except Exception:
+        return None
+
+
+def format_time_until(iso_str: str) -> str:
+    """Return human-readable time until the given ISO timestamp."""
+    try:
+        reset = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        delta = reset - now
+        if delta.total_seconds() <= 0:
+            return "скоро"
+        total_minutes = int(delta.total_seconds() / 60)
+        hours, minutes = divmod(total_minutes, 60)
+        if hours > 0:
+            return f"{hours}ч {minutes}м"
+        return f"{minutes}м"
+    except Exception:
+        return "?"

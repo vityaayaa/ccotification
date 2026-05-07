@@ -3,7 +3,7 @@ import json
 import sys
 import os
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import tempfile
 import pytest
 
@@ -179,3 +179,57 @@ def test_get_title_error_prefix():
     title = tg.get_title(20.0, "Done.", True)
     assert title.startswith("⚠️")
     assert "✅" in title
+
+
+def test_get_project_path_deep():
+    result = tg.get_project_path("/home/victor/projects/myapp")
+    assert result == "victor / projects / myapp"
+
+
+def test_get_project_path_short():
+    result = tg.get_project_path("/myapp")
+    assert result == "myapp"
+
+
+def test_get_project_path_two_levels():
+    result = tg.get_project_path("/projects/myapp")
+    assert result == "projects / myapp"
+
+
+def test_get_git_context_not_a_repo(tmp_path):
+    result = tg.get_git_context(str(tmp_path))
+    assert result is None
+
+
+def test_read_usage_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(tg, "USAGE_FILE", tmp_path / "missing.json")
+    assert tg.read_usage() is None
+
+
+def test_read_usage_valid(tmp_path, monkeypatch):
+    data = {"sessionUsage": 42, "sessionResetAt": "2026-05-07T15:00:00+00:00",
+            "weeklyUsage": 10, "weeklyResetAt": "2026-05-08T16:00:00+00:00"}
+    f = tmp_path / "usage.json"
+    f.write_text(json.dumps(data))
+    monkeypatch.setattr(tg, "USAGE_FILE", f)
+    result = tg.read_usage()
+    assert result["sessionUsage"] == 42
+
+
+def test_format_time_until_hours():
+    future = (datetime.now(timezone.utc) + timedelta(hours=3, minutes=12)).isoformat()
+    result = tg.format_time_until(future)
+    assert "3ч" in result
+    assert "м" in result
+
+
+def test_format_time_until_minutes_only():
+    future = (datetime.now(timezone.utc) + timedelta(minutes=45)).isoformat()
+    result = tg.format_time_until(future)
+    assert "ч" not in result
+    assert "м" in result
+
+
+def test_format_time_until_past():
+    result = tg.format_time_until("2020-01-01T00:00:00+00:00")
+    assert result == "скоро"
