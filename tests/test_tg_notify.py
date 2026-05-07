@@ -458,3 +458,73 @@ def test_check_reset_first_run_no_notification():
             tg.check_reset_notifications("TOKEN", 12345, usage, state)
     assert len(sent_texts) == 0
     assert state["last_session_reset_at"] == "2026-05-07T15:00:00+00:00"
+
+
+def test_main_sends_notification(tmp_path, monkeypatch):
+    config = {"bot_token": "TESTTOKEN", "chat_id": 99999}
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text(json.dumps(config))
+    monkeypatch.setattr(tg, "CONFIG_FILE", cfg_file)
+    monkeypatch.setattr(tg, "STATE_FILE", tmp_path / "state.json")
+    monkeypatch.setattr(tg, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(tg, "USAGE_FILE", tmp_path / "missing.json")
+
+    transcript = tmp_path / "conv.jsonl"
+    make_transcript([
+        {"type": "user", "timestamp": "2026-05-07T10:00:00.000Z",
+         "message": {"role": "user", "content": [{"type": "text", "text": "Build X"}]}},
+        {"type": "assistant", "timestamp": "2026-05-07T10:02:00.000Z",
+         "message": {"role": "assistant", "content": [
+             {"type": "text", "text": "I built X successfully. Here are the details."}
+         ]}},
+    ], transcript)
+
+    hook_input = json.dumps({"session_id": "test-session",
+                              "transcript_path": str(transcript)})
+
+    sent = []
+
+    empty_updates = {"ok": True, "result": []}
+    with patch("urllib.request.urlopen", return_value=make_mock_response(empty_updates)):
+        with patch.object(tg, "send_message", side_effect=lambda *a, **k: sent.append(a[2]) or {}):
+            with patch.object(tg, "get_cwd_from_session", return_value="/home/victor"):
+                with patch.object(tg, "update_cron_entry"):
+                    import io
+                    monkeypatch.setattr("sys.stdin", io.StringIO(hook_input))
+                    tg.main()
+
+    assert len(sent) >= 1
+    assert any("victor" in m for m in sent)
+
+def test_main_silent_when_muted(tmp_path, monkeypatch):
+    config = {"bot_token": "TESTTOKEN", "chat_id": 99999}
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text(json.dumps(config))
+    future = (datetime.now() + timedelta(hours=2)).isoformat()
+    state = {"mute_until": future, "tg_offset": 0, "last_session_reset_at": None,
+             "last_weekly_reset_at": None, "daily_date": None,
+             "daily_count": 0, "daily_total_duration_s": 0}
+    state_file = tmp_path / "state.json"
+    state_file.write_text(json.dumps(state))
+    monkeypatch.setattr(tg, "CONFIG_FILE", cfg_file)
+    monkeypatch.setattr(tg, "STATE_FILE", state_file)
+    monkeypatch.setattr(tg, "STATE_DIR", tmp_path)
+
+    transcript = tmp_path / "conv.jsonl"
+    make_transcript([
+        {"type": "user", "timestamp": "2026-05-07T10:00:00.000Z",
+         "message": {"role": "user", "content": []}},
+        {"type": "assistant", "timestamp": "2026-05-07T10:00:05.000Z",
+         "message": {"role": "assistant", "content": [{"type": "text", "text": "Done."}]}},
+    ], transcript)
+
+    sent = []
+    empty_updates = {"ok": True, "result": []}
+    with patch("urllib.request.urlopen", return_value=make_mock_response(empty_updates)):
+        with patch.object(tg, "send_message", side_effect=lambda *a, **k: sent.append(a)):
+            import io
+            monkeypatch.setattr("sys.stdin", io.StringIO(
+                json.dumps({"session_id": "s", "transcript_path": str(transcript)})))
+            tg.main()
+
+    assert len(sent) == 0

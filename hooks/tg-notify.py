@@ -414,3 +414,55 @@ def notify_reset(reset_type: str):
                 "📅 Недельные лимиты обновлены\n"
                 f"⏰ Следующий сброс через {next_r}")
     send_message(config["bot_token"], config["chat_id"], text)
+
+
+def main():
+    # Handle --notify-reset flag (called by cron)
+    if len(sys.argv) >= 3 and sys.argv[1] == "--notify-reset":
+        notify_reset(sys.argv[2])
+        return
+
+    try:
+        hook_input = json.loads(sys.stdin.read())
+    except Exception:
+        return
+
+    transcript_path = hook_input.get("transcript_path", "")
+    session_id = hook_input.get("session_id", "")
+    if not transcript_path or not os.path.exists(transcript_path):
+        return
+
+    try:
+        config = load_config()
+    except Exception:
+        return
+
+    token = config["bot_token"]
+    chat_id = config["chat_id"]
+    state = load_state()
+
+    # Poll for mute callbacks (before checking mute state)
+    state = process_callbacks(token, state)
+
+    if is_muted(state):
+        save_state(state)
+        return
+
+    data = parse_transcript(transcript_path, session_id)
+    title = get_title(data["duration_s"], data["text"], data["has_errors"])
+    project_path = get_project_path(data["cwd"])
+    git = get_git_context(data["cwd"])
+    preview = extract_preview(data["text"]) if data["text"] else ""
+    usage = read_usage()
+
+    message = build_message(title, project_path, git, data["duration_s"],
+                            preview, data["tool_count"], usage)
+    send_message(token, chat_id, message, build_keyboard())
+
+    state = update_daily_stats(state, data["duration_s"])
+    state = check_reset_notifications(token, chat_id, usage, state)
+    save_state(state)
+
+
+if __name__ == "__main__":
+    main()
