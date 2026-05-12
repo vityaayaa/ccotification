@@ -57,6 +57,16 @@ def get_cwd_from_session(session_id: str) -> str:
     return os.getcwd()
 
 
+def _is_real_user_message(msg: dict) -> bool:
+    """True if this is a real user message, not just tool results returned to Claude."""
+    content = msg.get("message", {}).get("content", [])
+    if isinstance(content, str):
+        return True
+    if not isinstance(content, list) or not content:
+        return True
+    return not all(b.get("type") == "tool_result" for b in content)
+
+
 def parse_transcript(path: str, session_id: str = "") -> dict:
     """Parse JSONL transcript and return extracted data."""
     messages = []
@@ -69,20 +79,21 @@ def parse_transcript(path: str, session_id: str = "") -> dict:
                 except json.JSONDecodeError:
                     pass
 
-    last_user = None
+    last_real_user = None  # for duration: ignores tool_result messages
     last_assistant = None
     for msg in messages:
         t = msg.get("type")
         if t == "user":
-            last_user = msg
+            if _is_real_user_message(msg):
+                last_real_user = msg
         elif t == "assistant":
             last_assistant = msg
 
-    # Duration: last user message → last assistant message
+    # Duration: last real user message → last assistant message
     duration_s = 0.0
-    if last_user and last_assistant:
+    if last_real_user and last_assistant:
         try:
-            t1 = datetime.fromisoformat(last_user["timestamp"].replace("Z", "+00:00"))
+            t1 = datetime.fromisoformat(last_real_user["timestamp"].replace("Z", "+00:00"))
             t2 = datetime.fromisoformat(last_assistant["timestamp"].replace("Z", "+00:00"))
             duration_s = max(0.0, (t2 - t1).total_seconds())
         except Exception:

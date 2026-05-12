@@ -62,6 +62,31 @@ def test_parse_transcript_duration(tmp_path):
     assert abs(result["duration_s"] - 90.0) < 1.0
 
 
+def test_parse_transcript_duration_with_tool_rounds(tmp_path):
+    """Duration is from real user message, not from the last tool_result message."""
+    transcript = tmp_path / "conv.jsonl"
+    make_transcript([
+        # Real user request at T+0
+        {"type": "user", "timestamp": "2026-05-07T10:00:00.000Z",
+         "message": {"role": "user", "content": [{"type": "text", "text": "Build it"}]}},
+        # Claude runs tools
+        {"type": "assistant", "timestamp": "2026-05-07T10:05:00.000Z",
+         "message": {"role": "assistant", "content": [
+             {"type": "tool_use", "id": "1", "name": "Bash", "input": {}}]}},
+        # Tool result (user message, NOT a real user message)
+        {"type": "user", "timestamp": "2026-05-07T10:18:25.000Z",
+         "message": {"role": "user", "content": [
+             {"type": "tool_result", "tool_use_id": "1", "content": "ok"}]}},
+        # Final assistant response at T+18m33s
+        {"type": "assistant", "timestamp": "2026-05-07T10:18:33.000Z",
+         "message": {"role": "assistant", "content": [
+             {"type": "text", "text": "Stage 4 complete!"}]}},
+    ], transcript)
+    result = tg.parse_transcript(str(transcript), session_id="test")
+    # Should be ~18m33s = 1113s, NOT ~8s from the last tool_result
+    assert result["duration_s"] > 1000
+
+
 def test_parse_transcript_text_and_tools(tmp_path):
     transcript = tmp_path / "conv.jsonl"
     make_transcript([
