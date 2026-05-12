@@ -199,7 +199,17 @@ def get_git_context(cwd: str) -> dict | None:
 
 def read_usage() -> dict | None:
     try:
-        return json.loads(USAGE_FILE.read_text())
+        path = USAGE_FILE
+        data = json.loads(path.read_text())
+        s_reset = data.get("sessionResetAt", "")
+        if s_reset:
+            reset_dt = datetime.fromisoformat(s_reset.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            if now > reset_dt + timedelta(minutes=5):
+                file_mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+                if (now - file_mtime).total_seconds() > 600:
+                    return None  # stale: reset is past and file is old
+        return data
     except Exception:
         return None
 

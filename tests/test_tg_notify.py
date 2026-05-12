@@ -216,6 +216,30 @@ def test_read_usage_valid(tmp_path, monkeypatch):
     assert result["sessionUsage"] == 42
 
 
+def test_read_usage_stale(tmp_path, monkeypatch):
+    """Reset is in the past and file is old → stale, return None."""
+    data = {"sessionUsage": 25, "sessionResetAt": "2020-01-01T00:00:00+00:00",
+            "weeklyUsage": 96, "weeklyResetAt": "2020-01-02T00:00:00+00:00"}
+    f = tmp_path / "usage.json"
+    f.write_text(json.dumps(data))
+    old_time = (datetime.now() - timedelta(hours=1)).timestamp()
+    os.utime(f, (old_time, old_time))
+    monkeypatch.setattr(tg, "USAGE_FILE", f)
+    assert tg.read_usage() is None
+
+
+def test_read_usage_stale_reset_but_fresh_file(tmp_path, monkeypatch):
+    """Reset is in the past but file is fresh → not stale, return data."""
+    data = {"sessionUsage": 25, "sessionResetAt": "2020-01-01T00:00:00+00:00",
+            "weeklyUsage": 96, "weeklyResetAt": "2020-01-02T00:00:00+00:00"}
+    f = tmp_path / "usage.json"
+    f.write_text(json.dumps(data))
+    monkeypatch.setattr(tg, "USAGE_FILE", f)
+    result = tg.read_usage()
+    assert result is not None
+    assert result["sessionUsage"] == 25
+
+
 def test_format_time_until_hours():
     future = (datetime.now(timezone.utc) + timedelta(hours=3, minutes=12)).isoformat()
     result = tg.format_time_until(future)
