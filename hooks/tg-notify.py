@@ -253,7 +253,7 @@ def build_message(title: str, project_path: str, git: dict | None,
     m, s = divmod(int(duration_s), 60)
     dur_str = f"{m}м {s}с" if m > 0 else f"{s}с"
 
-    lines = [f"<b>{escape_html(title)}</b>  ·  {now}", ""]
+    lines = [f"<b>{escape_html(title)}</b>", f"⏱ {dur_str}  ·  {now}", ""]
 
     # Project context block (code block for visual separation)
     ctx = [f"┌ 📁 {escape_html(project_path)}"]
@@ -268,20 +268,21 @@ def build_message(title: str, project_path: str, git: dict | None,
         lines.append(escape_html(preview))
         lines.append("")
 
-    tool_line = f"🛠 {tool_count} инструментов  ·  ⏱ {dur_str}" if tool_count > 0 else f"⏱ {dur_str}"
-    lines.append(tool_line)
+    if tool_count > 0:
+        lines.append(f"🛠 {tool_count} инструментов")
 
     if usage:
+        lines.append("")
         s_pct = usage.get("sessionUsage", 0)
         s_reset = usage.get("sessionResetAt", "")
         w_pct = usage.get("weeklyUsage", 0)
         w_reset = usage.get("weeklyResetAt", "")
-        s_line = f"📊 Окно: {s_pct}%"
+        s_line = f"  📊 Окно: {s_pct}%"
         if s_reset:
             s_line += f"  ·  сброс через {format_time_until(s_reset)}"
         lines.append(s_line)
         if w_pct > 0:
-            w_line = f"📅 Неделя: {w_pct}%"
+            w_line = f"  📅 Неделя: {w_pct}%"
             if w_reset:
                 w_line += f"  ·  сброс через {format_time_until(w_reset)}"
             lines.append(w_line)
