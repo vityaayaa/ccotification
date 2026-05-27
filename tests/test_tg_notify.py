@@ -577,3 +577,174 @@ def test_main_silent_when_muted(tmp_path, monkeypatch):
             tg.main()
 
     assert len(sent) == 0
+
+
+# ── notify_daily_summary ────────────────────────────────────────────────────
+
+def test_daily_summary_with_activity(tmp_path, monkeypatch):
+    config = {"bot_token": "TESTTOKEN", "chat_id": 99999}
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text(json.dumps(config))
+    today = datetime.now().strftime("%Y-%m-%d")
+    state = {"daily_date": today, "daily_count": 8, "daily_total_duration_s": 3723.0,
+             "mute_until": None, "tg_offset": 0,
+             "last_session_reset_at": None, "last_weekly_reset_at": None}
+    state_file = tmp_path / "state.json"
+    state_file.write_text(json.dumps(state))
+    monkeypatch.setattr(tg, "CONFIG_FILE", cfg_file)
+    monkeypatch.setattr(tg, "STATE_FILE", state_file)
+    monkeypatch.setattr(tg, "STATE_DIR", tmp_path)
+
+    sent = []
+    with patch.object(tg, "send_message", side_effect=lambda *a, **k: sent.append(a[2])):
+        tg.notify_daily_summary()
+
+    assert len(sent) == 1
+    msg = sent[0]
+    assert "Итоги дня" in msg
+    assert "8" in msg          # count
+    assert "1ч" in msg         # 3723s = 1h 2m 3s
+
+
+def test_daily_summary_no_activity(tmp_path, monkeypatch):
+    config = {"bot_token": "TESTTOKEN", "chat_id": 99999}
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text(json.dumps(config))
+    state = {"daily_date": "2026-05-25", "daily_count": 0, "daily_total_duration_s": 0.0,
+             "mute_until": None, "tg_offset": 0,
+             "last_session_reset_at": None, "last_weekly_reset_at": None}
+    state_file = tmp_path / "state.json"
+    state_file.write_text(json.dumps(state))
+    monkeypatch.setattr(tg, "CONFIG_FILE", cfg_file)
+    monkeypatch.setattr(tg, "STATE_FILE", state_file)
+    monkeypatch.setattr(tg, "STATE_DIR", tmp_path)
+
+    sent = []
+    with patch.object(tg, "send_message", side_effect=lambda *a, **k: sent.append(a[2])):
+        tg.notify_daily_summary()
+
+    assert len(sent) == 1
+    assert "не использовался" in sent[0]
+
+
+def test_main_daily_summary_flag(tmp_path, monkeypatch):
+    """--daily-summary flag triggers notify_daily_summary and exits."""
+    monkeypatch.setattr(sys, "argv", ["tg-notify.py", "--daily-summary"])
+    called = []
+    with patch.object(tg, "notify_daily_summary", side_effect=lambda: called.append(1)):
+        tg.main()
+    assert len(called) == 1
+
+
+# ── notify_ask_question ─────────────────────────────────────────────────────
+
+def _ask_question_setup(tmp_path, monkeypatch, muted=False):
+    config = {"bot_token": "TESTTOKEN", "chat_id": 99999}
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text(json.dumps(config))
+    mute_val = (datetime.now() + timedelta(hours=1)).isoformat() if muted else None
+    state = {"mute_until": mute_val, "tg_offset": 0,
+             "last_session_reset_at": None, "last_weekly_reset_at": None,
+             "daily_date": None, "daily_count": 0, "daily_total_duration_s": 0}
+    state_file = tmp_path / "state.json"
+    state_file.write_text(json.dumps(state))
+    monkeypatch.setattr(tg, "CONFIG_FILE", cfg_file)
+    monkeypatch.setattr(tg, "STATE_FILE", state_file)
+    monkeypatch.setattr(tg, "STATE_DIR", tmp_path)
+
+
+def test_notify_ask_question_sends_message(tmp_path, monkeypatch):
+    _ask_question_setup(tmp_path, monkeypatch)
+    hook_input = {
+        "tool_name": "AskUserQuestion",
+        "session_id": "",
+        "tool_input": {
+            "questions": [{
+                "question": "Which library should we use?",
+                "header": "Library",
+                "options": [
+                    {"label": "React", "description": "Popular UI framework"},
+                    {"label": "Vue", "description": "Progressive framework"},
+                ]
+            }]
+        }
+    }
+    sent = []
+    empty_updates = {"ok": True, "result": []}
+    with patch("urllib.request.urlopen", return_value=make_mock_response(empty_updates)):
+        with patch.object(tg, "send_message", side_effect=lambda *a, **k: sent.append(a[2])):
+            with patch.object(tg, "get_cwd_from_session", return_value="/home/victor/projects/myapp"):
+                tg.notify_ask_question(hook_input)
+
+    assert len(sent) == 1
+    msg = sent[0]
+    assert "❓" in msg
+    assert "Which library should we use?" in msg
+    assert "React" in msg
+    assert "Vue" in msg
+    assert "Popular UI framework" in msg
+
+
+def test_notify_ask_question_multiple_options(tmp_path, monkeypatch):
+    _ask_question_setup(tmp_path, monkeypatch)
+    hook_input = {
+        "tool_name": "AskUserQuestion",
+        "session_id": "",
+        "tool_input": {
+            "questions": [{
+                "question": "How should we proceed?",
+                "header": "Approach",
+                "options": [
+                    {"label": "Option A", "description": "First choice"},
+                    {"label": "Option B", "description": "Second choice"},
+                    {"label": "Option C", "description": "Third choice"},
+                ]
+            }]
+        }
+    }
+    sent = []
+    empty_updates = {"ok": True, "result": []}
+    with patch("urllib.request.urlopen", return_value=make_mock_response(empty_updates)):
+        with patch.object(tg, "send_message", side_effect=lambda *a, **k: sent.append(a[2])):
+            tg.notify_ask_question(hook_input)
+
+    assert len(sent) == 1
+    msg = sent[0]
+    assert "1." in msg
+    assert "2." in msg
+    assert "3." in msg
+    assert "Option A" in msg
+    assert "Option C" in msg
+
+
+def test_notify_ask_question_silent_when_muted(tmp_path, monkeypatch):
+    _ask_question_setup(tmp_path, monkeypatch, muted=True)
+    hook_input = {
+        "tool_name": "AskUserQuestion",
+        "session_id": "",
+        "tool_input": {"questions": [{"question": "Test?", "options": []}]}
+    }
+    sent = []
+    empty_updates = {"ok": True, "result": []}
+    with patch("urllib.request.urlopen", return_value=make_mock_response(empty_updates)):
+        with patch.object(tg, "send_message", side_effect=lambda *a, **k: sent.append(a)):
+            tg.notify_ask_question(hook_input)
+
+    assert len(sent) == 0
+
+
+def test_main_routes_ask_question(tmp_path, monkeypatch):
+    """main() routes to notify_ask_question when tool_name == AskUserQuestion."""
+    hook_input = json.dumps({
+        "tool_name": "AskUserQuestion",
+        "session_id": "",
+        "tool_input": {"questions": [{"question": "Continue?", "options": []}]}
+    })
+    called = []
+    with patch.object(tg, "notify_ask_question", side_effect=lambda x: called.append(x)):
+        import io
+        monkeypatch.setattr("sys.stdin", io.StringIO(hook_input))
+        tg.main()
+
+    assert len(called) == 1
+    assert called[0]["tool_name"] == "AskUserQuestion"

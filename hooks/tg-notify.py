@@ -438,15 +438,106 @@ def notify_reset(reset_type: str):
     send_message(config["bot_token"], config["chat_id"], text)
 
 
+def notify_daily_summary():
+    """Called by cron at 23:00 with --daily-summary."""
+    config = load_config()
+    state = load_state()
+    count = state.get("daily_count", 0)
+    total_s = state.get("daily_total_duration_s", 0.0)
+    date = state.get("daily_date", datetime.now().strftime("%Y-%m-%d"))
+
+    total_m, s = divmod(int(total_s), 60)
+    h, m = divmod(total_m, 60)
+    if h > 0:
+        dur_str = f"{h}ч {m}м"
+    elif m > 0:
+        dur_str = f"{m}м {s}с"
+    else:
+        dur_str = f"{s}с"
+
+    if count == 0:
+        text = f"📋 <b>Итоги дня</b>  ·  {date}\n\nСегодня Claude не использовался."
+    else:
+        text = (f"📋 <b>Итоги дня</b>  ·  {date}\n\n"
+                f"💬 Ответов: {count}\n"
+                f"⏱ Общее время работы: {dur_str}")
+    send_message(config["bot_token"], config["chat_id"], text)
+
+
+def notify_ask_question(hook_input: dict):
+    """Called from PreToolUse when Claude invokes AskUserQuestion."""
+    try:
+        config = load_config()
+    except Exception:
+        return
+
+    token = config["bot_token"]
+    chat_id = config["chat_id"]
+    state = load_state()
+
+    state = process_callbacks(token, state)
+    if is_muted(state):
+        save_state(state)
+        return
+
+    tool_input = hook_input.get("tool_input", {})
+    questions = tool_input.get("questions", [])
+    session_id = hook_input.get("session_id", "")
+
+    cwd = get_cwd_from_session(session_id) if session_id else os.getcwd()
+    project_path = get_project_path(cwd)
+    now = datetime.now().strftime("%H:%M:%S")
+
+    lines = ["<b>❓ Клод задаёт вопрос</b>", f"⏰ {now}", ""]
+
+    ctx = [f"┌ 📁 {escape_html(project_path)}", "└" + "─" * 37]
+    lines.append("<code>" + "\n".join(ctx) + "</code>")
+    lines.append("")
+
+    for q in questions:
+        question_text = q.get("question", "")
+        options = q.get("options", [])
+
+        if question_text:
+            lines.append(f"<b>{escape_html(question_text)}</b>")
+            lines.append("")
+
+        for i, opt in enumerate(options, 1):
+            label = opt.get("label", "")
+            desc = opt.get("description", "")
+            line = f"  {i}. {escape_html(label)}"
+            if desc:
+                short = desc[:70].rstrip()
+                if len(desc) > 70:
+                    short += "…"
+                line += f"\n      <i>{escape_html(short)}</i>"
+            lines.append(line)
+
+        lines.append("")
+
+    send_message(token, chat_id, "\n".join(lines).strip(), build_keyboard())
+    save_state(state)
+
+
 def main():
     # Handle --notify-reset flag (called by cron)
     if len(sys.argv) >= 3 and sys.argv[1] == "--notify-reset":
         notify_reset(sys.argv[2])
         return
 
+    # Handle --daily-summary flag (called by cron at 23:00)
+    if "--daily-summary" in sys.argv:
+        notify_daily_summary()
+        return
+
     try:
         hook_input = json.loads(sys.stdin.read())
     except Exception:
+        return
+
+    # PreToolUse: AskUserQuestion
+    if hook_input.get("tool_name") == "AskUserQuestion":
+        notify_ask_question(hook_input)
         return
 
     transcript_path = hook_input.get("transcript_path", "")
