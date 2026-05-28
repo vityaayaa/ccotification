@@ -748,3 +748,71 @@ def test_main_routes_ask_question(tmp_path, monkeypatch):
 
     assert len(called) == 1
     assert called[0]["tool_name"] == "AskUserQuestion"
+
+
+# ── notify_system_notification ──────────────────────────────────────────────
+
+def test_notify_system_notification_limit(tmp_path, monkeypatch):
+    _ask_question_setup(tmp_path, monkeypatch)
+    hook_input = {
+        "session_id": "",
+        "message": "Claude AI usage limit reached. Your limit will reset at 9:00 AM.",
+        "title": "Claude Code",
+    }
+    sent = []
+    empty_updates = {"ok": True, "result": []}
+    with patch("urllib.request.urlopen", return_value=make_mock_response(empty_updates)):
+        with patch.object(tg, "send_message", side_effect=lambda *a, **k: sent.append(a[2])):
+            tg.notify_system_notification(hook_input)
+
+    assert len(sent) == 1
+    msg = sent[0]
+    assert "🚫" in msg
+    assert "usage limit reached" in msg
+
+
+def test_notify_system_notification_generic(tmp_path, monkeypatch):
+    _ask_question_setup(tmp_path, monkeypatch)
+    hook_input = {
+        "session_id": "",
+        "message": "Task completed successfully.",
+        "title": "Claude Code",
+    }
+    sent = []
+    empty_updates = {"ok": True, "result": []}
+    with patch("urllib.request.urlopen", return_value=make_mock_response(empty_updates)):
+        with patch.object(tg, "send_message", side_effect=lambda *a, **k: sent.append(a[2])):
+            tg.notify_system_notification(hook_input)
+
+    assert len(sent) == 1
+    assert "🔔" in sent[0]
+    assert "Task completed" in sent[0]
+
+
+def test_notify_system_notification_silent_when_muted(tmp_path, monkeypatch):
+    _ask_question_setup(tmp_path, monkeypatch, muted=True)
+    hook_input = {"session_id": "", "message": "You've hit your limit.", "title": "Claude Code"}
+    sent = []
+    empty_updates = {"ok": True, "result": []}
+    with patch("urllib.request.urlopen", return_value=make_mock_response(empty_updates)):
+        with patch.object(tg, "send_message", side_effect=lambda *a, **k: sent.append(a)):
+            tg.notify_system_notification(hook_input)
+
+    assert len(sent) == 0
+
+
+def test_main_routes_notification(tmp_path, monkeypatch):
+    """main() routes to notify_system_notification for Notification hook payload."""
+    hook_input = json.dumps({
+        "session_id": "",
+        "message": "Claude AI usage limit reached.",
+        "title": "Claude Code",
+    })
+    called = []
+    with patch.object(tg, "notify_system_notification", side_effect=lambda x: called.append(x)):
+        import io
+        monkeypatch.setattr("sys.stdin", io.StringIO(hook_input))
+        tg.main()
+
+    assert len(called) == 1
+    assert "limit" in called[0]["message"]

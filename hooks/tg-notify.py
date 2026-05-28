@@ -464,6 +464,53 @@ def notify_daily_summary():
     send_message(config["bot_token"], config["chat_id"], text)
 
 
+def notify_system_notification(hook_input: dict):
+    """Called from Notification hook — forwards Claude Code system notifications."""
+    try:
+        config = load_config()
+    except Exception:
+        return
+
+    token = config["bot_token"]
+    chat_id = config["chat_id"]
+    state = load_state()
+
+    state = process_callbacks(token, state)
+    if is_muted(state):
+        save_state(state)
+        return
+
+    message = hook_input.get("message", "").strip()
+    title = hook_input.get("title", "").strip()
+    session_id = hook_input.get("session_id", "")
+    now = datetime.now().strftime("%H:%M:%S")
+
+    cwd = get_cwd_from_session(session_id) if session_id else os.getcwd()
+    project_path = get_project_path(cwd)
+
+    # Pick emoji based on message content
+    msg_lower = message.lower()
+    if "limit" in msg_lower or "usage" in msg_lower:
+        icon = "🚫"
+    elif "error" in msg_lower or "fail" in msg_lower:
+        icon = "⚠️"
+    else:
+        icon = "🔔"
+
+    header = title if title else "Claude Code"
+    lines = [f"<b>{icon} {escape_html(header)}</b>", f"⏰ {now}", ""]
+
+    ctx = [f"┌ 📁 {escape_html(project_path)}", "└" + "─" * 37]
+    lines.append("<code>" + "\n".join(ctx) + "</code>")
+    lines.append("")
+
+    if message:
+        lines.append(escape_html(message))
+
+    send_message(token, chat_id, "\n".join(lines).strip(), build_keyboard())
+    save_state(state)
+
+
 def notify_ask_question(hook_input: dict):
     """Called from PreToolUse when Claude invokes AskUserQuestion."""
     try:
@@ -538,6 +585,11 @@ def main():
     # PreToolUse: AskUserQuestion
     if hook_input.get("tool_name") == "AskUserQuestion":
         notify_ask_question(hook_input)
+        return
+
+    # Notification hook: system messages (limit hit, errors, etc.)
+    if "message" in hook_input and "transcript_path" not in hook_input:
+        notify_system_notification(hook_input)
         return
 
     transcript_path = hook_input.get("transcript_path", "")
